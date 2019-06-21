@@ -1,11 +1,7 @@
+package iris
 
-import java.util
-
-import com.fasterxml.jackson.core.JsonFactory
-import com.fasterxml.jackson.core.`type`.TypeReference
-import com.fasterxml.jackson.databind.ObjectMapper
-import org.datavec.api.io.WritableComparable
-import org.datavec.api.records.reader.impl.collection.CollectionRecordReader
+import org.datavec.api.records.reader.impl.jackson.FieldSelection
+import org.datavec.api.split.InputStreamInputSplit
 import org.deeplearning4j.datasets.datavec.RecordReaderDataSetIterator
 import org.deeplearning4j.nn.conf.NeuralNetConfiguration
 import org.deeplearning4j.nn.conf.layers.{DenseLayer, OutputLayer}
@@ -14,16 +10,15 @@ import org.deeplearning4j.nn.weights.WeightInit
 import org.deeplearning4j.optimize.listeners.ScoreIterationListener
 import org.nd4j.evaluation.classification.Evaluation
 import org.nd4j.linalg.activations.Activation
-import org.nd4j.linalg.dataset.api.iterator.DataSetIterator
 import org.nd4j.linalg.io.ClassPathResource
 import org.nd4j.linalg.learning.config.Adam
 import org.nd4j.linalg.lossfunctions.LossFunctions.LossFunction
-
+import records.{JsonArrayRecordReader, TransformFieldSelection}
 import scala.collection.JavaConverters._
 
 object IrisClassfication {
 
-  def main(args: Array[String])  {
+  def main(args: Array[String]) {
 
     val seed = 123
     val learningRate = .06
@@ -55,13 +50,15 @@ object IrisClassfication {
     model.setListeners(new ScoreIterationListener(10))
 
     //train
-    val trainIter = createIrisDataIterator("iris.json")
-    for (i <- 0 until epochs) {
+    val trainIter = createIrisDataIterator("iris/iris.json", batchSize)
+    for (epCounter <- 0 until epochs) {
+      println(s"Train epoch #$epCounter")
+      trainIter.reset()
       model.fit(trainIter)
     }
 
     println("Evaluating model...")
-    val testIter = createIrisDataIterator("iris-testing.json")
+    val testIter = createIrisDataIterator("iris/iris-testing.json", 1)
     val eval = new Evaluation(3)
     testIter.asScala.foreach(ds => {
       val features = ds.getFeatures
@@ -75,31 +72,47 @@ object IrisClassfication {
     val ds = testIter.next()
     ds.setLabelNames(List("setosa", "virginica", "versicolor").asJava)
     val prediction = model.predict(ds)
-    println(prediction)
+    println(s"Prediction: $prediction")
   }
 
+  def createIrisDataIterator(filePath: String, batchSize: Int) = {
+    val jsonFieldSelection: FieldSelection = new FieldSelection.Builder()
+      .addField("sepal_length")
+      .addField("sepal_width")
+      .addField("petal_length")
+      .addField("petal_width")
+      .addField("species")
+      .build()
 
-  def createIrisDataIterator(filePath: String, batchSize: Int = 50) = {
+    val transformFieldSelection = new TransformFieldSelection(jsonFieldSelection)
+    transformFieldSelection.addTransformation(species => species match {
+      case "setosa" => "0"
+      case "virginica" => "1"
+      case "versicolor" => "2"
+    }, "species")
+
+    val jsonReader = new JsonArrayRecordReader(transformFieldSelection)
+    val irisDataResource = new ClassPathResource(filePath)
+    val irisDataInput = new InputStreamInputSplit(irisDataResource.getInputStream, irisDataResource.getURI)
+
+    jsonReader.initialize(irisDataInput)
+
+    new RecordReaderDataSetIterator(jsonReader, batchSize, 4, 3)
+  }
+
+  /*
+  def createIrisDataIterator(filePath: String, batchSize: Int) = {
     val dataCollection = readIrisData(filePath).map(_.asWriteableCollection.asJava).toList.asJava
     val reader = new CollectionRecordReader(dataCollection)
     new RecordReaderDataSetIterator(reader, batchSize, 4, 3)
   }
 
   def readIrisData(filePath: String): Array[IrisData] = {
-    /*
-    val jsonFieldSelection: FieldSelection = new FieldSelection.Builder()
-      .addField("sepal_length", "sepal_width", "petal_length", "petal_width", "species")
-      .build()
-    val trainDataReader = new JacksonRecordReader(jsonFieldSelection, new ObjectMapper(new JsonFactory()))
-    val irisTrainDataInput = new InputStreamInputSplit(irisTrainDataResource.getInputStream, irisTrainDataResource.getFile)
-    trainDataReader.initialize(irisTrainDataInput)
-    */
-
     val jsonMapper = new ObjectMapper()
     val jsonFactory = new JsonFactory()
-    val irisTrainDataResource = new ClassPathResource(filePath)
-    val irisData: Array[IrisData] = jsonMapper.readValue(jsonFactory.createParser(irisTrainDataResource.getInputStream), new TypeReference[Array[IrisData]] {})
+    val irisDataResource = new ClassPathResource(filePath)
+    val irisData: Array[IrisData] = jsonMapper.readValue(jsonFactory.createParser(irisDataResource.getInputStream), new TypeReference[Array[IrisData]] {})
     return irisData
   }
-
+  */
 }
